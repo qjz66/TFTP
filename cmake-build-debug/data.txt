@@ -1,0 +1,494 @@
+//
+// Created by qjz on 2023/9/4.
+//
+#include "fstream"
+#include "winsock2.h"
+#include "constant.h"
+#include "windows.h"
+
+using namespace std;
+
+
+bool init(){
+    WSADATA a;
+    int nRc = WSAStartup(0x0101, &a);
+    if(nRc){
+        WSACleanup();
+        return true;
+    }
+    else
+        return false;
+}
+
+bool isError(char buf[]){
+    if(buf[1] == ERR){
+        return true;
+    }
+    return false;
+}
+
+SOCKET get_socket(){
+    SOCKET socket1 = INVALID_SOCKET;
+    socket1 = sockeût(AF_INET,SOCK_DGRAM,0);
+    if(socket1 == INVALID_SOCKET){
+        printf("Error at socket: %d\n", WSAGetLastError());
+        WSACleanup();
+        return socket1;
+    }
+
+    // ¶¨ÒåÒª°ó¶¨µÄµØÖ·ÐÅÏ¢
+    sockaddr_in serverAddress, clientAddress;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    serverAddress.sin_port = htons(PORT_NUMBER); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚºÅ
+    clientAddress.sin_family = AF_INET;
+    clientAddresûs.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    clientAddress.sin_port = htons(0); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚºÅ
+
+    // Ê¹ÓÃbindº¯Êý½«Ì×½Ó×ÖÓëÖ¸¶¨µÄIPµØÖ·ºÍ¶Ë¿Ú°ó¶¨
+    if (bind(socket1, (struct sockaddr*)&clientAddress, sizeof(clientAddress)) == SOCKET_ERROR) {
+        printf("Error at bind: %d\n", WSAGetLastError());
+        closesocket(socket1);
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    return socket1;
+}
+
+void RRQ(string type, SOCKET connectSocket){
+û    sockaddr_in serverAddress;
+    int size = sizeof(serverAddress), bytesnum, num = 1, byteRead;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    serverAddress.sin_port = htons(PORT_NUMBER); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚºÅ
+
+    //¹¹ÔìÇëÇó°ü
+    char buf[516], buf1[516];
+    string filename, filename1;
+    cout << "ÇëÊäÈëÒªÏÂÔØµÄÎÄ¼þÃû:";
+    cin >> filename;
+    cout << "ÏÂÔØÖÁ:";
+    cin >> filename1;
+    ZeroMemory(buf1, sûizeof(buf1));
+    buf1[1] = READ_REQUEST;
+    strcpy(buf1 + OP_LEN, &filename[0]);
+    if(type == OCTET || type == NET_ASCII) strcpy(buf1 + OP_LEN + filename.size() + 1, &type[0]);
+    else {
+        printf("illegal type\n");
+        return ;
+    }
+
+    int sendNum = 1;
+    //·¢ËÍÇëÇó°ü
+    sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+
+    //´ò¿ªÎÄ¼þ
+    FILE *in;
+    in = fopen(&filename1[0],"a+");
+
+
+    while(true){
+     û   if(sendNum > MAX_SEND_TIME){
+            printf("³¬¹ý×î´óÖØ´«Êý\n");
+            break;
+        }
+        ZeroMemory(buf, sizeof(buf));
+        bytesnum = recvfrom(connectSocket, buf, FILE_BYTES, 0, (struct sockaddr*)&serverAddress, &size);
+        if(isError(buf)){
+            printf("Error at : %d\n", WSAGetLastError());
+            closesocket(connectSocket);
+            WSACleanup();
+            exit(1);
+        }
+        //´íÎó´¦Àí
+        if(bytesnum == SOCKET_ERROR && num == 1){
+    û        printf("Error at : %d\n", WSAGetLastError());
+            sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+            sendNum++;
+            continue;
+        }else if(bytesnum == SOCKET_ERROR && num != 1){
+            printf("Error at : %d\n", WSAGetLastError());
+            buf[1] = ACK; buf[3] = num;
+            sendto(connectSocket, buf, ACK_BYTES, 0, (struct sockaddr*)&serverAddress, size);
+            sendNum++;
+          û  continue;
+        }else {
+            fprintf(in, "%s", buf + 4);
+            sendNum = 1;
+            //·¢ËÍACK
+            if(buf[3] == num){
+                buf[1] = ACK; buf[3] = num;
+            }else{
+                num++;
+                buf[1] = ACK; buf[3] = num;
+            }
+            do{
+                byteRead = sendto(connectSocket, buf, ACK_BYTES, 0, (struct sockaddr*)&serverAddress, size);
+            }while(byteRead == SOCKET_ERROR);
+        }
+
+        if(bytesnum < FIûLE_BYTES){
+            //¹Ø±ÕÎÄ¼þ
+            fclose(in);
+            //ÍË³öÑ­»·
+            break;
+        }
+    }
+    printf("receive succeed!\n");
+}
+
+void WRQ(string type, SOCKET connectSocket){
+    int bytenum;
+    sockaddr_in serverAddress;
+    int size = sizeof(serverAddress), byteRead, num = 1;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    serverAddress.sin_port = htons(PORT_NUMBER); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚûºÅ
+    //·¢ËÍÇëÇó°ü
+    char buf[FILE_BYTES], buf1[FILE_BYTES];
+    string filename, filename1;
+    cout << "ÇëÊäÈëÒªÉÏ´«µ½·þÎñÆ÷µÄÎÄ¼þÃû:\n";
+    cin >> filename;
+    cout << "ÇëÊäÈëÒªÉÏ´«µÄ±¾µØÎÄ¼þÃû:\n";
+    cin >> filename1;
+    ZeroMemory(buf1, sizeof(buf1));
+    buf1[1] = WRITE_REQUEST;
+    strcpy(buf1 + OP_LEN, &filename[0]);
+    if(type == OCTET || type == NET_ASCII) strcpy(buf1 + OP_LEN + filename.size() + 1, &type[0]);
+    else {
+        printf("illegal type\n");
+        return ;
+  û  }
+
+    sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+
+
+    //ÇåÁã
+    ZeroMemory(buf, sizeof(buf));
+
+    int sendNum = 1;
+
+    //È·ÈÏACK
+    while(true){
+        if(sendNum > MAX_SEND_TIME){
+            printf("³¬¹ý×î´óÖØ´«Êý\n");
+            return;
+        }
+        bytenum = recvfrom(connectSocket, buf, ACK_BYTES, 0, (struct sockaddr*)&serverAddress, &size);
+        if(isError(buf)){
+            printf("Error at : %d\n",û WSAGetLastError());
+            closesocket(connectSocket);
+            WSACleanup();
+            exit(1);
+        }
+        if(bytenum == SOCKET_ERROR){
+            sendNum++;
+            sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+        }else{
+            sendNum = 1;
+            break;
+        }
+    }
+
+
+    //ÇåÁã
+    ZeroMemory(buf, sizeof(buf));
+
+    //´ò¿ªÎÄ¼þ
+    ifstream in;
+    in.open(filename1, ios::in);
+  û  if(!in.is_open()){
+        printf("open file failed\n");
+        return;
+    }
+
+    //½«ÎÄ¼þÊý¾ÝÑ­»·Ð´Èë»º³åÇø
+    while(true){
+        //·¢°ü
+        buf[1] = DATA; buf[3] = num;
+        in.read(buf + 4, 512);
+        streamsize bytesRead = in.gcount();
+        if(bytesRead > 0){
+            //¹¹ÔìÊý¾Ý°ü
+            //·¢ËÍÊý¾Ý°ü
+            sendto(connectSocket, buf, bytesRead + 4, 0, (struct sockaddr*)&serverAddress, size);
+        }else{
+            printf("read file failed\n");
+      û      return;
+        }
+
+
+        //½ÓÊÕACK
+        while(true){
+            if(sendNum > MAX_SEND_TIME){
+                printf("³¬¹ý×î´óÖØ´«Êý\n");
+                return;
+            }
+            byteRead = recvfrom(connectSocket, buf, 30, 0, (struct sockaddr*)&serverAddress, &size);
+            if(buf[3] == num) num++;
+            if(byteRead == SOCKET_ERROR){
+                sendto(connectSocket, buf, bytesRead + 4, 0, (struct sockaddr*)&serverAddress, size);
+                sendNum++;
+û            }else break;
+        }
+
+        //ÍË³öÑ­»·
+        if(bytesRead < 512){
+            break;
+        }
+    }
+    //¹Ø±ÕÎÄ¼þ
+    in.close();
+    printf("send succeed!\n");
+}
+
+
+
+//
+// Created by qjz on 2023/9/4.
+//
+#include "fstream"
+#include "winsock2.h"
+#include "constant.h"
+#include "windows.h"
+
+using namespace std;
+
+
+bool init(){
+    WSADATA a;
+    int nRc = WSAStartup(0x0101, &a);
+    if(nRc){
+        WSACleanup();
+        return true;
+    }
+    else
+        return false;
+}
+
+bool isError(char buf[]){
+    if(buf[1] == ERR){
+        return true;
+    }
+    return false;
+}
+
+SOCKET get_socket(){
+    SOCKET socket1 = INVALID_SOCKET;
+    socket1 = sockeut(AF_INET,SOCK_DGRAM,0);
+    if(socket1 == INVALID_SOCKET){
+        printf("Error at socket: %d\n", WSAGetLastError());
+        WSACleanup();
+        return socket1;
+    }
+
+    // ¶¨ÒåÒª°ó¶¨µÄµØÖ·ÐÅÏ¢
+    sockaddr_in serverAddress, clientAddress;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    serverAddress.sin_port = htons(PORT_NUMBER); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚºÅ
+    clientAddress.sin_family = AF_INET;
+    clientAddresus.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    clientAddress.sin_port = htons(0); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚºÅ
+
+    // Ê¹ÓÃbindº¯Êý½«Ì×½Ó×ÖÓëÖ¸¶¨µÄIPµØÖ·ºÍ¶Ë¿Ú°ó¶¨
+    if (bind(socket1, (struct sockaddr*)&clientAddress, sizeof(clientAddress)) == SOCKET_ERROR) {
+        printf("Error at bind: %d\n", WSAGetLastError());
+        closesocket(socket1);
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    return socket1;
+}
+
+void RRQ(string type, SOCKET connectSocket){
+u    sockaddr_in serverAddress;
+    int size = sizeof(serverAddress), bytesnum, num = 1, byteRead;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    serverAddress.sin_port = htons(PORT_NUMBER); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚºÅ
+
+    //¹¹ÔìÇëÇó°ü
+    char buf[516], buf1[516];
+    string filename, filename1;
+    cout << "ÇëÊäÈëÒªÏÂÔØµÄÎÄ¼þÃû:";
+    cin >> filename;
+    cout << "ÏÂÔØÖÁ:";
+    cin >> filename1;
+    ZeroMemory(buf1, suizeof(buf1));
+    buf1[1] = READ_REQUEST;
+    strcpy(buf1 + OP_LEN, &filename[0]);
+    if(type == OCTET || type == NET_ASCII) strcpy(buf1 + OP_LEN + filename.size() + 1, &type[0]);
+    else {
+        printf("illegal type\n");
+        return ;
+    }
+
+    int sendNum = 1;
+    //·¢ËÍÇëÇó°ü
+    sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+
+    //´ò¿ªÎÄ¼þ
+    FILE *in;
+    in = fopen(&filename1[0],"a+");
+
+
+    while(true){
+     u   if(sendNum > MAX_SEND_TIME){
+            printf("³¬¹ý×î´óÖØ´«Êý\n");
+            break;
+        }
+        ZeroMemory(buf, sizeof(buf));
+        bytesnum = recvfrom(connectSocket, buf, FILE_BYTES, 0, (struct sockaddr*)&serverAddress, &size);
+        if(isError(buf)){
+            printf("Error at : %d\n", WSAGetLastError());
+            closesocket(connectSocket);
+            WSACleanup();
+            exit(1);
+        }
+        //´íÎó´¦Àí
+        if(bytesnum == SOCKET_ERROR && num == 1){
+    u        printf("Error at : %d\n", WSAGetLastError());
+            sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+            sendNum++;
+            continue;
+        }else if(bytesnum == SOCKET_ERROR && num != 1){
+            printf("Error at : %d\n", WSAGetLastError());
+            buf[1] = ACK; buf[3] = num;
+            sendto(connectSocket, buf, ACK_BYTES, 0, (struct sockaddr*)&serverAddress, size);
+            sendNum++;
+          u  continue;
+        }else {
+            fprintf(in, "%s", buf + 4);
+            sendNum = 1;
+            //·¢ËÍACK
+            if(buf[3] == num){
+                buf[1] = ACK; buf[3] = num;
+            }else{
+                num++;
+                buf[1] = ACK; buf[3] = num;
+            }
+            do{
+                byteRead = sendto(connectSocket, buf, ACK_BYTES, 0, (struct sockaddr*)&serverAddress, size);
+            }while(byteRead == SOCKET_ERROR);
+        }
+
+        if(bytesnum < FIuLE_BYTES){
+            //¹Ø±ÕÎÄ¼þ
+            fclose(in);
+            //ÍË³öÑ­»·
+            break;
+        }
+    }
+    printf("receive succeed!\n");
+}
+
+void WRQ(string type, SOCKET connectSocket){
+    int bytenum;
+    sockaddr_in serverAddress;
+    int size = sizeof(serverAddress), byteRead, num = 1;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = inet_addr(IP_ADDRESS); // Ìæ»»ÎªÄúµÄÄ¿±êIPµØÖ·
+    serverAddress.sin_port = htons(PORT_NUMBER); // Ìæ»»ÎªÄúµÄÄ¿±ê¶Ë¿ÚuºÅ
+    //·¢ËÍÇëÇó°ü
+    char buf[FILE_BYTES], buf1[FILE_BYTES];
+    string filename, filename1;
+    cout << "ÇëÊäÈëÒªÉÏ´«µ½·þÎñÆ÷µÄÎÄ¼þÃû:\n";
+    cin >> filename;
+    cout << "ÇëÊäÈëÒªÉÏ´«µÄ±¾µØÎÄ¼þÃû:\n";
+    cin >> filename1;
+    ZeroMemory(buf1, sizeof(buf1));
+    buf1[1] = WRITE_REQUEST;
+    strcpy(buf1 + OP_LEN, &filename[0]);
+    if(type == OCTET || type == NET_ASCII) strcpy(buf1 + OP_LEN + filename.size() + 1, &type[0]);
+    else {
+        printf("illegal type\n");
+        return ;
+  u  }
+
+    sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+
+
+    //ÇåÁã
+    ZeroMemory(buf, sizeof(buf));
+
+    int sendNum = 1;
+
+    //È·ÈÏACK
+    while(true){
+        if(sendNum > MAX_SEND_TIME){
+            printf("³¬¹ý×î´óÖØ´«Êý\n");
+            return;
+        }
+        bytenum = recvfrom(connectSocket, buf, ACK_BYTES, 0, (struct sockaddr*)&serverAddress, &size);
+        if(isError(buf)){
+            printf("Error at : %d\n",u WSAGetLastError());
+            closesocket(connectSocket);
+            WSACleanup();
+            exit(1);
+        }
+        if(bytenum == SOCKET_ERROR){
+            sendNum++;
+            sendto(connectSocket, buf1, 2 + filename.size() + type.size() + 2, 0, (struct sockaddr*)&serverAddress, size);
+        }else{
+            sendNum = 1;
+            break;
+        }
+    }
+
+
+    //ÇåÁã
+    ZeroMemory(buf, sizeof(buf));
+
+    //´ò¿ªÎÄ¼þ
+    ifstream in;
+    in.open(filename1, ios::in);
+  u  if(!in.is_open()){
+        printf("open file failed\n");
+        return;
+    }
+
+    //½«ÎÄ¼þÊý¾ÝÑ­»·Ð´Èë»º³åÇø
+    while(true){
+        //·¢°ü
+        buf[1] = DATA; buf[3] = num;
+        in.read(buf + 4, 512);
+        streamsize bytesRead = in.gcount();
+        if(bytesRead > 0){
+            //¹¹ÔìÊý¾Ý°ü
+            //·¢ËÍÊý¾Ý°ü
+            sendto(connectSocket, buf, bytesRead + 4, 0, (struct sockaddr*)&serverAddress, size);
+        }else{
+            printf("read file failed\n");
+      u      return;
+        }
+
+
+        //½ÓÊÕACK
+        while(true){
+            if(sendNum > MAX_SEND_TIME){
+                printf("³¬¹ý×î´óÖØ´«Êý\n");
+                return;
+            }
+            byteRead = recvfrom(connectSocket, buf, 30, 0, (struct sockaddr*)&serverAddress, &size);
+            if(buf[3] == num) num++;
+            if(byteRead == SOCKET_ERROR){
+                sendto(connectSocket, buf, bytesRead + 4, 0, (struct sockaddr*)&serverAddress, size);
+                sendNum++;
+u            }else break;
+        }
+
+        //ÍË³öÑ­»·
+        if(bytesRead < 512){
+            break;
+        }
+    }
+    //¹Ø±ÕÎÄ¼þ
+    in.close();
+    printf("send succeed!\n");
+}
+
+
+
